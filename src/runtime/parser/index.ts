@@ -10,6 +10,7 @@ import { useProcessorPlugins } from './utils/plugins'
 import { defaults } from './options'
 import { generateToc } from './toc'
 import { compileHast } from './compiler'
+import { findLineNumber } from './utils/position'
 
 let moduleOptions: Partial<typeof import('#mdc-imports')> | undefined
 let generatedMdcConfigs: MdcConfig[] | undefined
@@ -106,10 +107,19 @@ export const createMarkdownParser = async (inlineOptions: MDCParseOptions = {}) 
     // Start processing stream
     const cwd = typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '/tmp'
     const processedFile: VFile | undefined = await new Promise((resolve, reject) => {
-      // There is an issue with bundler optimizer which causes undefined error
-      // When using processor.process as a promise. Use callback instead to avoid this issue
       processor.process({ cwd, ...fileOptions, value: content, data: frontmatter }, (err, file) => {
         if (err) {
+          console.log('Error object:', JSON.stringify(err, null, 2))
+          if (err.name === 'YAMLParseError') {
+            const actualLine = findLineNumber(content)
+            console.log('Calculated actual line:', actualLine)
+            // Replace just the line number in the first part of the message
+            const [firstLine, ...rest] = err.message.split('\n')
+            err.message = [
+              firstLine.replace(/at line \d+/, `at line ${actualLine}`),
+              ...rest
+            ].join('\n')
+          }
           reject(err)
         } else {
           resolve(file)

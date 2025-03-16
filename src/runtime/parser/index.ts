@@ -14,6 +14,11 @@ import { compileHast } from './compiler'
 let moduleOptions: Partial<typeof import('#mdc-imports')> | undefined
 let generatedMdcConfigs: MdcConfig[] | undefined
 
+interface ParseError extends Error {
+  pos?: [number, number]
+  linePos?: Array<{ line: number, col: number }>
+}
+
 export const createParseProcessor = async (inlineOptions: MDCParseOptions = {}) => {
   if (!moduleOptions) {
     moduleOptions = await import('#mdc-imports' /* @vite-ignore */).catch(() => ({}))
@@ -105,28 +110,37 @@ export const createMarkdownParser = async (inlineOptions: MDCParseOptions = {}) 
     // Start processing stream
     const cwd = typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '/tmp'
     const processedFile: VFile | undefined = await new Promise((resolve, reject) => {
-      // There is an issue with bundler optimizer which causes undefined error
-      // When using processor.process as a promise. Use callback instead to avoid this issue
       processor.process({ cwd, ...fileOptions, value: content, data: frontmatter, position: true }, (err, file) => {
         if (err) {
+          const parseError = err as ParseError
+          // Enable for debugging
           console.log('Error details:', {
-            errorPos: err.pos,
-            linePos: err.linePos,
+            errorPos: parseError.pos,
+            linePos: parseError.linePos,
             content: content.split('\n').map((line, i) => `${i + 1}: ${line}`).join('\n')
           })
 
-          if (err.name === 'YAMLParseError' && err.pos?.[0] != null) {
-            // Find the YAML block start
-            const yamlBlockStart = content.indexOf('---\n', err.pos[0] - 50)
-            if (yamlBlockStart >= 0) {
-              // Count lines up to the YAML block
-              const precedingContent = content.slice(0, yamlBlockStart)
-              const linesBefore = precedingContent.split('\n').length - 1
+          // Handle any error with position information
+          if (parseError?.pos && Array.isArray(parseError.pos) && parseError.pos[0] != null) {
+            // Calculate the actual line number based on content before the error
+            const errorPos = parseError.pos[0]
+            const upToError = content.slice(0, errorPos)
+            const linesBefore = (upToError.match(/\n/g) || []).length // Removed the +1 here
 
-              // Add the relative line number within the YAML block
-              const actualLine = linesBefore + (err.linePos?.[0].line || 0)
-              console.log('Line calculation:', { linesBefore, relativeErrorLine: err.linePos?.[0].line, actualLine })
+            // Safely access linePos array and its properties
+            const relativeLine = parseError.linePos?.[0]?.line
+            const actualLine = typeof relativeLine === 'number' ? linesBefore + relativeLine : linesBefore
 
+            // Enable for debugging
+            console.log('Line calculation:', {
+              errorPos,
+              linesBefore,
+              relativeLine,
+              actualLine
+            })
+
+            // Only update message if we found a valid line number pattern
+            if (err.message?.includes('at line')) {
               err.message = err.message.replace(/at line \d+/, `at line ${actualLine}`)
             }
           }

@@ -105,6 +105,8 @@ export const createMarkdownParser = async (inlineOptions: MDCParseOptions = {}) 
     // Start processing stream
     const cwd = typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '/tmp'
     const processedFile: VFile | undefined = await new Promise((resolve, reject) => {
+      // There is an issue with bundler optimizer which causes undefined error
+      // When using processor.process as a promise. Use callback instead to avoid this issue
       processor.process({ cwd, ...fileOptions, value: content, data: frontmatter, position: true }, (err, file) => {
         if (err) {
           console.log('Error details:', {

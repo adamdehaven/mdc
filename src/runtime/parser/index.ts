@@ -10,7 +10,6 @@ import { useProcessorPlugins } from './utils/plugins'
 import { defaults } from './options'
 import { generateToc } from './toc'
 import { compileHast } from './compiler'
-import { findLineNumber } from './utils/position'
 
 let moduleOptions: Partial<typeof import('#mdc-imports')> | undefined
 let generatedMdcConfigs: MdcConfig[] | undefined
@@ -58,18 +57,11 @@ export const createParseProcessor = async (inlineOptions: MDCParseOptions = {}) 
   }
 
   let processor = unified()
+    .use(remarkParse as any)
 
   // mdc.config.ts hooks
   for (const config of mdcConfigs) {
     processor = await config.unified?.pre?.(processor) || processor
-  }
-
-  // Use `remark-parse` plugin to parse markdown input
-  processor.use(remarkParse as any)
-
-  // mdc.config.ts hooks
-  for (const config of mdcConfigs) {
-    processor = await config.unified?.remark?.(processor) || processor
   }
 
   // Apply custom plugins to extend remark capabilities
@@ -101,24 +93,39 @@ export const createMarkdownParser = async (inlineOptions: MDCParseOptions = {}) 
   const processor = await createParseProcessor(inlineOptions)
 
   return async function parse(md: string, { fileOptions }: { fileOptions?: VFileOptions } = {}): Promise<MDCParserResult> {
-    // Extract front matter data
     const { content, data: frontmatter } = await parseFrontMatter(md)
 
     // Start processing stream
     const cwd = typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '/tmp'
     const processedFile: VFile | undefined = await new Promise((resolve, reject) => {
-      processor.process({ cwd, ...fileOptions, value: content, data: frontmatter }, (err, file) => {
+      processor.process({
+        cwd,
+        ...fileOptions,
+        value: content,
+        data: frontmatter,
+        position: true
+      }, (err, file) => {
         if (err) {
-          console.log('Error object:', JSON.stringify(err, null, 2))
-          if (err.name === 'YAMLParseError') {
-            const actualLine = findLineNumber(content)
-            console.log('Calculated actual line:', actualLine)
-            // Replace just the line number in the first part of the message
-            const [firstLine, ...rest] = err.message.split('\n')
-            err.message = [
-              firstLine.replace(/at line \d+/, `at line ${actualLine}`),
-              ...rest
-            ].join('\n')
+          console.log('Error details:', {
+            errorPos: err.pos,
+            linePos: err.linePos,
+            content: content.split('\n').map((line, i) => `${i + 1}: ${line}`).join('\n')
+          })
+
+          if (err.name === 'YAMLParseError' && err.pos?.[0] != null) {
+            // Find the YAML block start
+            const yamlBlockStart = content.indexOf('---\n', err.pos[0] - 50)
+            if (yamlBlockStart >= 0) {
+              // Count lines up to the YAML block
+              const precedingContent = content.slice(0, yamlBlockStart)
+              const linesBefore = precedingContent.split('\n').length - 1
+
+              // Add the relative line number within the YAML block
+              const actualLine = linesBefore + (err.linePos?.[0].line || 0)
+              console.log('Line calculation:', { linesBefore, relativeErrorLine: err.linePos?.[0].line, actualLine })
+
+              err.message = err.message.replace(/at line \d+/, `at line ${actualLine}`)
+            }
           }
           reject(err)
         } else {

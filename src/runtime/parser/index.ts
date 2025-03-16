@@ -57,11 +57,18 @@ export const createParseProcessor = async (inlineOptions: MDCParseOptions = {}) 
   }
 
   let processor = unified()
-    .use(remarkParse as any)
 
   // mdc.config.ts hooks
   for (const config of mdcConfigs) {
     processor = await config.unified?.pre?.(processor) || processor
+  }
+
+  // Use `remark-parse` plugin to parse markdown input
+  processor.use(remarkParse as any)
+
+  // mdc.config.ts hooks
+  for (const config of mdcConfigs) {
+    processor = await config.unified?.remark?.(processor) || processor
   }
 
   // Apply custom plugins to extend remark capabilities
